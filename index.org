@@ -1,0 +1,9 @@
+#+TITLE:       Frankie Liu's org-page
+#+AUTHOR:      Frankie Liu
+#+EMAIL:       frankie.y.liu@gmail.com
+#+DATE:        2017-12-13 Wed
+#+URI:         /
+#+KEYWORDS:    Lisp, Scheme, Emacs, Linux, Archlinux, Java, C++, Org-page, Programming, Blog, Frankie Liu, ini_always
+#+LANGUAGE:    en
+#+OPTIONS:     H:3 num:nil toc:nil \n:nil @:t ::t |:t ^:nil -:t f:t *:t <:t
+#+DESCRIPTION: Frankie Liu's org-page
