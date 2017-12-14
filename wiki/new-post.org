@@ -1,0 +1,11 @@
+#+TITLE:       a wiki post
+#+AUTHOR:      Frankie Liu
+#+EMAIL:       fyliu@jitter
+#+DATE:        2017-12-13 Wed
+#+URI:         /blog/%y/%m/%d/a-wiki-post
+#+KEYWORDS:    org-mode
+#+TAGS:        org-mode
+#+LANGUAGE:    en
+#+OPTIONS:     H:3 num:nil toc:nil \n:nil ::t |:t ^:nil -:nil f:t *:t <:t
+#+DESCRIPTION: Org-mode
+Hopefully this gets published
