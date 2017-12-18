@@ -7,3 +7,13 @@
 #+LANGUAGE:    en
 #+OPTIONS:     H:3 num:nil toc:nil \n:nil @:t ::t |:t ^:nil -:t f:t *:t <:t
 #+DESCRIPTION: Frankie Liu's org-page
+
+* op/category-config-alist
+  This seems to be one place where you can influence the URI being generated
+
+* op-template.el : op/get-category-name (category)
+  get's the :label property
+  return the name of the category based from the op/category-config-alist
+
+* op-template.el : op/render-footer (&optional param-table)
+  renders the footer on each page
