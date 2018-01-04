@@ -1,0 +1,744 @@
+#+STARTUP: showall indent hidestars
+#+TITLE:       cs267 lecture 1
+#+AUTHOR:      Frankie Liu
+#+EMAIL:       fyliu@jitter
+#+DATE:        2017-12-18 Mon
+#+URI:         /wiki/%y/%m/%d/demmel
+#+KEYWORDS:    org-mode
+#+TAGS:        cs267 demmel berkeley
+#+LANGUAGE:    en
+#+OPTIONS:     H:3 num:nil toc:nil \n:nil ::t |:t ^:nil -:nil f:t *:t <:t
+#+DESCRIPTION: Org-mode
+#+LaTeX_header: \usepackage{amsmath} %% needed explicitely for org-preview-latex
+
+* Principles of Parallel Computing
+
+** Finding enough parallelism
+Amdahl's law:
+- s     : fraction of work done sequentially
+- (1-s) : fraction of work parallelizable
+- p     : number of processors
+- speedup(p) :
+  time(1)/time(p)
+  <= 1/(s+(1-s)/p)
+  <= 1/s
+- you will never be faster than 1/(s=0.01) = 100 times if 1% of time
+  spent on serially reading data from the disk (as an example)
+
+** Granularity
+Overhead of parallelism:
+- cost of starting a thread or process
+- cost of communicating shared data
+- cost of synchronizing
+- extra (redundant) computation
+- each in the range of milliseconds (million flops)
+- tradeoff: algorithm needs sufficiently large units of work to run
+  fast in parallel (large enough granularity), but not so large that
+  there is not enough parallel work
+
+** Locality
+Memory access is expensive, pencil example
+DRAM performace 7%/yr, uProc 60%/yr
+** Load balance
+** Coordination and synchronization
+** Performance modeling/debugging/tuning
+** Two type of programmers
+Efficiency Layer (10% of programmers)
+Productivity Layer (90% of programmers)
+Make tools available that hides the details
+
+* Simple model for computation time
+
+- $f$ : number of arith operations
+- $t_f$ : time for arith operation
+- $m$ : number of (slow) mem accesses
+- $t_m$ : time for slow mem access
+
+1. Total time to run
+
+   $f t_f + m t_m$
+
+2. Rearrange this to ratios
+
+   \begin{eqnarray}
+   =& f t_f \left(1 + \frac{t_m}{t_f} \frac{m}{f} \right)\\
+   =& f t_f \left(1 + \frac{t_m}{t_f} \frac{1}{q} \right)
+   \end{eqnarray}
+
+3. $q$ (computational intensity): how many arith operations per
+   memory access
+
+4. $t_m/t_f$ (machine balance) number of arith operations I can do in
+   time of one memory access
+
+5. if $q=t_m/t_f$ you get about 2x the lower bound, i.e. you are at
+   half peak speed
+
+* Example: Matrix-vector multiply
+
+#+BEGIN_SRC c
+  // read x (1:n) into fast memory
+  // read y (1:n) "
+  for(int i=0; i < n; i++)
+    for(int j=0; j < n; j++)
+      y[i] = y[i] + A[i][j] * x[j];
+  // write y(1:n) back into memory
+#+END_SRC
+
+$m = 3n + n^2$
+$f = 2n^2$
+$q \approx 2$
+
+* Assumptions
+1. ignore parallelism processor and memory instructions
+   simply use the max instead of adding
+   factor of 2 difference (small difference)
+2. fast memory can hold three vectors
+3. cost of fast memory is 0
+4, memory latency is constant
+
+* Example: Naive matrix multiply
+
+#+BEGIN_SRC c
+  // implements C=C+A*B
+  for(int i=0; i < n; i++) {
+    // 1. read row a[i]
+    for(int j=0; j < n; j++) {
+      // 2. read c[i][j]
+      // 3. read column b[i][j]
+      for(int k=0; k < n; k++) {
+        c[i][j] += a[i][k] * b[k][j];
+      }
+      // 4. write back c[i][j]
+#+END_SRC
+
+1. inner most line $n^3$ times, i.e.
+   1. the addition and multiplication take $ 2 n^3 $ operations
+2. each matrix has $n^2$ entries and since there are 3 entries
+   need to access $3 n^2$ entries
+3. Potentially $q = \frac{2 n^3}{3 n^2}$, BUT
+4. Note:
+   1. row of a is read only once (1)
+   2. element c is read once and written once (2) (4)
+   3. each column of b is read n times, once per row of a,
+      assume we can't fit all of b in memory, so
+   4. $2 n^2$ for c
+   5. $1 n^2$ for a
+   6. $n n^3$ for b
+   7. $q = \frac{2n^3}{3n^2 + n^3}  = 2$
+   8. same as matrix-vector mul
+ 5. inner two loops are just matrix-vector multiply
+
+
+#+BEGIN_EXAMPLE
+                                                              /
+                                   (512 cycles / flop)       /
+                                      Page miss  	      /
+               (100 cycles / flop)       +------------------
+                    TLB miss     	  /
+                                       /
+   (16 cycle / flop)     --------------
+    Cache miss   	  /-
+                      /-
+          -----------/
+        /
+       /
+                2			3		   4		    5
+                  Log Problem Size (n)				       
+#+END_EXAMPLE
+
+* Blocked or Tiled Matrix Multiply
+#+BEGIN_SRC c
+  // implements C=C+A*B
+  // matrix divided in b x b sub-blocks
+  // b = n/N is the block size
+
+  // Iterate over the blocks (N of them)
+  for(int i=0; i < N; i++) {
+    for(int j=0; j < N; j++) {
+      // 1. read c[i][j] (block)
+      for(int k=0; k < N; k++) {
+        // 2. read blocks A and B into memory
+        c[i][j] += a[i][k] * b[k][j];
+      }
+      // 3. write back c[i][j]
+#+END_SRC
+
+Analysis:
+1. Inner loop reads a $b^2$ from memory $N^3$ times
+2. Total memory accesses :
+   1. $2 b^2  N^2 = 2 n^2$ for c
+   2. $2 b^2 N^3 = 2 n^3/b$ for a, b
+3. Inner loop computation $2 N^3 b^3 = 2 n^3$ for add multiply over b x b matrix
+4. $q = 2 n^3 / (2 n^2 + 2 n^3/b) \approx b$
+
+* Improving efficiency
+1. maximize $b$
+2. constraints: block A, B, C must fit into the fast memory
+   $3 b^2 < M_{fast}$
+3. Speed up
+   $q \approx b = (M_{fast}/3)^{1/2}$
+4. For $(t_m/t_f) (1/q) = 1$, half-peak speed, we need $M_{fast} = 3 (t_m/t_f)^2$
+
+* Limit in optimization
+Theorem: Any reorganization of this algorithm (that uses only
+associativity) is limited to $q=O(M_{fast}^{1/2})$
+
+What is associativity?
+
+1. number of words moved between fast and slow memory
+
+   $\Omega(n^3/(M_{fast}^{1/2}))$
+
+2. $\Omega$ means lower bounded
+3. cost of moving data may also depend on the number of "messages"
+   into which data is packed
+   1. number of cache lines, disk accesses
+   2. number of messages = $\Omega(n^3/M_{fast}^{3/2})$
+
+* Notes:
+1. $q$ computational intensity for matrix multiply is $b$, the block
+   size
+2. largest block is determined by what can fit into the fast memory
+   $3 q_{best} ^2 = 3 b_{best}^2 = M_{fast}$
+3. number of words moved to fast memory:
+   $2n^3/b = 2n^3/(M_{fast}/3)^{1/2}$
+   $\Omega(n^3/M_{fast}^{1/2})$
+
+* What if there are more than 2 levels of memory?
+1. Tiled algorithm on all levels of hierarchy
+   1. 1 level of memory => 3 nested loops
+   2. 2 levels of memory => 6 nested loops (why?)
+   3. 4 levels of memory => 9 nested loops (3 x number of levels)
+2. Cache oblivious algorithms
+   1. Treat nxn matrix multiply as a set of smaller problems
+   2. Eventually these will fit in cache (?)
+   3. minimized # wods moved between every level of memory hiearchy
+   4. oblivious to number and sizes of levels
+
+* Recursive matrix multiplication
+
+\[
+C = A B
+\]
+
+\begin{equation}
+\begin{bmatrix}
+C11 & C12 \\
+C21 & C22
+\end{bmatrix} = 
+\begin{bmatrix}
+A11 & A12 \\
+A21 & A22
+\end{bmatrix}
+\begin{bmatrix}
+B11 & B12 \\
+B21 & B22
+\end{bmatrix}
+\end{equation}
+
+Call recursively
+
+#+BEGIN_SRC c
+  void c=rmm(a,b,n) {
+    if(n==1) {
+      c = a*b;
+    } else {
+      c11 = rmm(a11,b11,n/2) + rmm(a12,b21,n/2);
+      c12 = rmm(a11,b12,n/2) + rmm(a12,b22,n/2);
+      // etc..
+    }
+  }
+#+END_SRC
+
+1. Number of arithm operations:
+
+   $A(n) = 1$ for $n=1$
+
+   \begin{align}
+   A(n) &= 8 A(n/2)+ 4(n/2)^2\\
+        &= 2n^3
+   \end{align}
+
+   1. 8 recurrances
+   2. 4 additions of n/2 x n/2 square matrices = (n/2)^2 additions
+       
+2. Number of memory movements
+
+   $W(n) = 3n^2$ if $3n^2 < M_{fast}$, i.e. if it fits in fast memory
+
+   \begin{align}
+   W(n) &= 8 W(n/2)+ 4\cdot 3(n/2)^2\\
+        &= O(n^3 / M_{fast}^{1/2} + n^2)
+   \end{align}
+
+   1. for the additions, there are 4 additions (4x)
+   2. for each addition, you need to get $(n/2)^2$ for a,b (reads), c (write)
+   3. this looks worse than the recursion above, but you stop sooner,
+      when $3n^2 < M_{fast}$
+
+3. Hard to do
+
+* Data layout
+1. Space filling curve: z-ordering
+2. Pack the sub-matrices so that they are contiguous in space when you
+   load the sub-matrices.
+3. Z-Morton Ordering papers on cache oblivious algorithms and recursive
+   layouts
+
+Order is n^2 to move data around
+
+* Strassen's Matrix Multiply (1969)
+1. Traditional algorithm had O(n^3) flops
+2. Strassen discovered an algorithm with lower flops O(n^2.81)
+3. Consider 2x2 matrix multiply, normally 8 multiplies and 4 adds
+   1. Strasses does it with 7 multiplies and 18 adds
+4. number of operations
+   $A(n) = 7 A(n/2) + 18 (n/2)^2 = O(n^{2.81})$
+5. Extend communication lower bound to Strassen
+   $W(n) = \Omega(n^{\log_2 7}/M^{(\log_2 7)/2 -1} \approx
+   \Omega(n^{2.81}/M^{0.4})$
+
+
+* World record exponent
+(1987) 2.37548 
+(2011) 2.37293
+(2014) 2.37286
+
+1. Lower bound on $W(n)$ extended (2015) Jacob Scott
+2. Possibility of $O(n^{2+\epsilon})$
+3. Strassen not in BLAS libraries, top 500 forbid Strassen
+   Rank the machine by n^3
+
+* Tuning code in practice
+1. Autotuning: let computer generate large set of possible code
+   variations and search them for fastest ones
+2. Need to know if you want to build autotuners
+
+* Optimizations
+0. Message explicitly use local variables
+1. Remove false dependencies
+2. Exploit multiple registers
+3. Loop unrolling
+   1. Mix up computation with memory fetches
+4. Hide instruction latency
+   Balance * and + so that you can do these two simultaneously
+   But if can do two *'s then you want to place them together
+5. copy optimization
+
+* Locality in other algorithms
+1. Performance of any algo is limited by q
+   q = computational intensity = # arith_ops / # words_moved
+2. In matrix multiply, increase q by changing computation order
+   - increased temporal locality
+3. Other algo and data structures, even hand-transformations are still
+   open problems
+
+* Lecture 3 (1/26/16)
+
+* Programming models
+- Shared memory (cannot scale)
+- Shared address space
+- Message passing (works like post office)
+- Data parallel
+- Clusters of SMPs or GPUs
+- Grid
+
+* Generic parallel architecture
+- interconnection network
+- how many processors can connect to interconnection network
+- p^2 connections if you want point to point connection
+
+* Parallel Programming Models
+- control
+- data
+- synchronization
+- cost
+
+* Shared memory
+
+fork(sum,a[0:n/2-1]);
+sum(a[n/2:n-1]);
+
+"race condition" or "data race" occurs when:
+- two threads access the same variable, and at least one does a write
+- the access are concurrent (not synchronized), so they could happen
+  sumultaneously
+
+* Atomic
+- reads and writes are atomic
+- but += operation is not atomic
+- all computations happen in (private) registers
+
+- race condition can be fixed by adding locks (only one thread can
+  hold a lock at a time, others wait for it)
+
+* Lecture 3 (1/28/16)
+
+* Distributed memory
+ 
+* Definitions
+- SMP : Symmetric Multi Processing, very closely related to
+  multi-core
+- SIMD : Single Instruction Multiple Data processing, vector
+  machines  Data parallel
+- CLUMP : cluster of SMPs, Hybrid
+
+* Hybrid
+MPI between nodes
+openMP for SMPs
+vector for GPU, CPU
+
+* Review
+- shared, distributed ,data parallel, hybrid
+- independent : little synchronization
+- same size : load balanced
+- locality : little communication
+
+* Lecture 4 (1/28/16) : Sources of Parallelism and Locality
+
+* Game of life
+** How to partition mesh
+p1 ----------------------
+   ----------------------
+
+p2
+
+p3
+
+..
+
+p9
+
+Each processor takes two rows of the mesh (mesh is 18x18)
+The communication at the edge is = n * (p-1) =
+number of edges between processors
+
+Compare with
+
+- - - - - -  How many edges are there?
+-         -  p^(1/2) = number of blocks in one direction
+-   p1    -  Number of neighbors p1 p2 p3 = (p^1/2)-1
+-         -  and you have (p^(1/2)-1)*n in one direction
+-         -  and another  (p^(1.2)-1)*n in the other direction
+- - - - - -  total = 2n(p^(1/2)-1) crossings
+
+* Graph partitioning
+1. load balance             each p gets same number of nodes
+2. minimize communication   minimize edge crossings
+
+* Asynchronous case
+1. more efficient
+2. harder to synchronize
+
+* Scheduling
+1. conservative
+   1. deadlock possible if cycles in graph
+      1. are you stuck message (pass it along, kill cycle - serial)
+   2. simulated min time stamp of inputs
+2. speculative (optmistic)
+   1. assume no new inputs keep simulating
+   2. backup if assumption is wrong using timestamps
+3. load balancing and locality is difficult
+   1. locality means putting tightly coupled parts in one processor
+   2. that processor is doing all the work, bad for load balancing
+
+* Lecture 4 (2/16/16)
+
+* Summary:
+- parallelism and locality arise naturally in simulation
+- discrete event simulation
+  - state + transition function
+  - nodes are state, edges are dependencies
+  - partition graph (NP hard, so approximate)
+- synchronous
+- asynchronous
+  - conservative vs speculative
+* Particle systems
+- finite number of particles
+- time and positions are continuous
+* How to parallelize forces
+- force = external_force + nearby_force + far_field_force
+* Shark and Fish code
+#+BEGIN_SRC octave
+  dt = .01; t=0;
+  while t<tfinal,
+    t=t+dt;
+    fishp = fishp + dt*fishv;
+    accel = current(fishp)./fishm;
+    fishv = fishv + dt*accel;
+    %% Find max fishv and max fisha
+    %% If max acceleration is large then smaller time step
+    %% If max velocity is small then smaller time step
+    dt = min(.1*max(abs(fishv))/max(abs(accel)),1);
+  end
+#+END_SRC
+* parallelism in nearby forces
+- challenge 1: interactions of particles near processor boundary
+  - boundary called "ghost zone" or "halo"
+  - increase "surface" to "volume" ratio to lower communication
+- challenge 2: load imbalance, divide space unevenly
+  - quad-tree
+* parallelism in far-field forces
+- all-to-all interactio
+- force depends on all other particles
+- simplest algorithm is O(n^2)
+
+#+BEGIN_EXAMPLE
+
+     +-----------+       +-----------+         +-----------+	     +-----------+
+     |           |       |           |         |           |       |           |
+  +->|           +------>|           +-------->|           +------>|           +--+
+  |  |           |       |           |         |           |	     |           |  |
+  |  |           |       |           |         |           |	     |           |  |
+  |  +-----------+       +-----------+         +-----------+	     +-----------+  |
+  |					                                  	    |
+  +-------------------------------------------------------------------------------+
+
+#+END_EXAMPLE
+
+- shift particles n/p particles
+- p-1 shifts
+- p * (n/p) = n total communication required
+- Better: n to n/sqrt(p) - by replicating data
+- Better: particles that are far away look simpler
+
+* Far-field: particle mesh methods
+0. approximate force
+1. superimpose mesh
+2. move particles to nearest grid points (scatter)
+3. solve PDE on regular mesh O(n log n) vs O(n^2) (solve mesh problem)
+4. forces are interpolated at particles from mesh points (gather)
+
+* Far-field: tree decomposition
+0. approximate force
+1. forces from group of far-away particles grouped together
+2. Use tree: each node contains an approximation of this decendants
+3. O(n log n) or O(n)
+4. Algorithms
+   1. Barnes-Hut
+   2. Fast multipole method of Greegard/Rohklin
+   3. Anderson
+
+* Lumped Variables
+** Explicit methods
+- ode is x' = f = Ax
+- x[i+1] = x[i] + dt * x'[i]  // Note time is discretized
+- Forward Euler methods: x' => x[i+1]-x[i] = Ax[i]*dt
+  x[i+1] = x[i] + dt * A*x[i] // Sparse matrix-vector multiplication
+- Tradeoffs:
+  - simple algo
+  - stability prob : may need to take very small time steps esp if
+    system is stiff, A has some large entries
+** Implicit methods
+- slope is computed differently
+- Backward Euler method: x' => x[i+1]-x[i] = Ax[i+1]*dt
+  x[i+1] = (I-dt*A)^(-1) x[i]
+- larger time step possible for stiff problems
+- more difficut algorith need to solve a sparse linear system of eqns
+  at each step
+** Eigensolvers
+- sparse matrix multiplications
+** Summary
+- Explicit
+  Sparse-matrix-vector multiply
+- Implicit
+  LU Decomposition
+* Sparse Matrix Vector multiply, Compressed Sparse Row (CSR) format
+Pack the rows
+v[1] v[2] v[4] v[9]  values   val
+  1    2    4    9   indices  ind
+
+for each row i
+ for k=ptr[i] to ptr[i+1]-1 do
+   y[i] = y[i] + val[k]*x[ind[k]]
+
+** How to partition
+- Give each processor a number of rows, parts of y, and parts of x
+- Processor k stores y[i] x[i] and row i of A
+- Processor k computes y[i] = A[i][j] x[j]
+- Note that because x[j] cannot all be stored at A,
+  x[j] needs communication with neighbors
+- Minimize the communication cost same as solving the graph partition
+  problem (slide 43)
+* Lecture 5 (2/2/16)
+* Continuous variables and parameters
+- elliptic (steady state, global space)
+- hyperbolic (time dep, local space)
+- parabolic (time dep, global space)
+* Heat equation
+-
+
+* Lecture 5 (2/4/16)
+
+* Lecture 6 (2/4/16)
+- Threads / openmp
+* Shared Memory
+- program is a collection of thread of control
+- each thread has set of private and shared variablles
+- communicate implicitly by writing and reading shared variables
+- coordinate by synchronizing shared variables
+
+------shared s---------------------   shared memory
+
+private 0    private 1    private 2   local stack variables
+
+p0           p1           p2          threads
+
+* Shared Memory Programming
+OpenMP standarad for applicatino level programming
+- cobegin/coend
+  cobegin
+   job1(a1);
+   job2(a2);
+  coend
+- fork/join
+  t1 = fork(job1,a1)
+  job2(a2);
+  join(t1)
+* pthread
+errcode = pthread_create ( &threads[tn], NULL, SayHello, NULL);
+pthread_join (threads[tn], NULL);
+
+compile using gcc -lpthread
+
+* more pthread functions
+pthread_yield();            // informs scheduler that thread will yield its quantum
+pthread_exit(void *value);  // exit thread and pass value to joining thread
+pthread_join(pthread_t *thread, void ** result); // Wait for thread to finish
+pthread_t me = pthread_self(); // allow a thread to obtain its identifier
+pthread_detach(thread);     // informs that exit will not be needed by join
+
+* race condition
+static int s = 0;
+Thread 1
+for i=0,n/2-1
+ s = s + f(A[i])
+
+Thread 2
+for i=n/2,n-1
+ s = s + f(A[i])
+
+* Synchronization barrier
+- all threads hit the same barrier
+
+  work_on_my_subgrid();
+  barrier;
+  read_neighboring_values();
+  barrier;
+
+- more complicated
+
+  if (tid % 2 == 0) {
+    work1();
+    barrier;
+  } else {
+    barrier;
+  }
+
+* Mutexes
+- mutual exclusion aka locks
+lock *l = alloc_and_init();
+acquire(l);
+ access data
+release(l);
+
+- semaphores generalize to more than one thread
+
+* Mutexes in POSIX
+#include <pthread.h>
+pthread_mutex_t amutex = PTHREAD_MUTEX_INITIALIZER;
+// or pthread_mutex_init(&amutex, NULL);
+int pthread_mutex_lock(amutex);
+
+thread 1     thread 2
+lock(a)      lock(b)    deadlock
+lock(b)      lock(a)
+
+* Summary of Programming with Threads
+POSIX based on OS
+Slow
+
+* Intro to OpenMP
+Preprocessor (compiler) directives (~80%)
+library calls
+environment variables
+
+* Programmer's view
+- not parallelize auto
+- not guarantee speed up
+- data race still possible
+
+* Motivation
+How OpenMP partitions the threads:
+
+#pragma omp parallel for
+for (i=0;i<25;i++) {
+  printf("Foo");
+}
+
+static([chunk]) divides iterations statically between threads
+- each thread receives [chunk] iterations
+- default [chunk] is ceil(#iterations/#threads)
+
+dynamic([chunk]) allocates [chunk] iterations per thread adds
+more [chunk] iterations when a thread finishes
+- forms a logical work queue, consisting of all loop iterations
+- default [chunk] is 1
+
+guided([chunk]) allocates dynamically, but [chunk] is exponentially
+reduced with each iteration
+
+* Data sharing
+- pthreads
+
+// global is shared
+int bigdata[1024];
+
+// in function is local (in stack)
+void *foo(void *bar){
+  int tid;
+}
+
+* openMP synchronization
+#pragma omp critical
+{
+}
+
+#pragma omp barrier
+
+omp_set_lock (lock l);
+// Code
+omp_unset_lock (lock l);
+
+#pragma omp single
+
+* Grid example
+for ( t=0; t<t_steps; t++) {
+  #pragma omp parrael for \
+   shared(grid, x_dim, y_dim) private(x,y)
+  for (x) {
+    for (y) {
+      grid[x][y] = average of neighbors
+    }
+  }
+  // implicit barrier synch
+  temp_grid = grid;
+  grid = other_grid;
+  other_grid = temp_grid;
+}
+
+* Trick with trees
+* outline
+- n inputs log2 n is a lower bound to compute any function in parallel
+  why?
+
+- i
+* Per file emacs settings
+# https://www.gnu.org/software/emacs/manual/html_node/emacs/Specifying-File-Variables.html
+# Local Variables:
+# eval: (org-mode)
+# eval: (plist-put org-format-latex-options :scale 1.5)
+# eval: (local-set-key "\M-\C-g" 'org-plot/gnuplot)b
+# End:
+

@@ -1,4 +1,4 @@
-#+TITLE:       a wiki post
+#+TITLE:       cs267 lecture 1
 #+AUTHOR:      Frankie Liu
 #+EMAIL:       fyliu@jitter
 #+DATE:        2017-12-13 Wed
